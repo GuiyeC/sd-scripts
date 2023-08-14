@@ -30,21 +30,30 @@ def save_to_file(file_name, model, state_dict, dtype):
         torch.save(model, file_name)
 
 
-def merge_to_sd_model(text_encoder, unet, models, ratios, merge_dtype):
-    text_encoder.to(merge_dtype)
+def merge_to_sd_model(unet, text_encoder, text_encoder_2, models, ratios, merge_dtype):
     unet.to(merge_dtype)
+    text_encoder.to(merge_dtype)
+    text_encoder_2.to(merge_dtype)
+    
+    layers_per_block = unet.config.layers_per_block
 
     # create module map
     name_to_module = {}
-    for i, root_module in enumerate([text_encoder, unet]):
+    for i, root_module in enumerate([unet, text_encoder, text_encoder_2]):
         if i == 0:
-            prefix = lora.LoRANetwork.LORA_PREFIX_TEXT_ENCODER
-            target_replace_modules = lora.LoRANetwork.TEXT_ENCODER_TARGET_REPLACE_MODULE
-        else:
             prefix = lora.LoRANetwork.LORA_PREFIX_UNET
             target_replace_modules = (
                 lora.LoRANetwork.UNET_TARGET_REPLACE_MODULE + lora.LoRANetwork.UNET_TARGET_REPLACE_MODULE_CONV2D_3X3
             )
+        elif text_encoder_2:
+            target_replace_modules = lora.LoRANetwork.TEXT_ENCODER_TARGET_REPLACE_MODULE
+            if i == 1:
+                prefix = lora.LoRANetwork.LORA_PREFIX_TEXT_ENCODER_1
+            else:
+                prefix = lora.LoRANetwork.LORA_PREFIX_TEXT_ENCODER_2
+        else:
+            prefix = lora.LoRANetwork.LORA_PREFIX_TEXT_ENCODER
+            target_replace_modules = lora.LoRANetwork.TEXT_ENCODER_TARGET_REPLACE_MODULE
 
         for name, module in root_module.named_modules():
             if module.__class__.__name__ in target_replace_modules:
@@ -66,6 +75,34 @@ def merge_to_sd_model(text_encoder, unet, models, ratios, merge_dtype):
 
                 # find original module for this lora
                 module_name = ".".join(key.split(".")[:-2])  # remove trailing ".lora_down.weight"
+                if "input_blocks" in module_name:
+                    i = int(module_name.split("input_blocks_", 1)[1].split("_", 1)[0])
+                    block_id = (i - 1) // (layers_per_block + 1)
+                    layer_in_block_id = (i - 1) % (layers_per_block + 1)
+                    module_name = module_name.replace(f"input_blocks_{i}_0", f"down_blocks_{block_id}_resnets_{layer_in_block_id}")
+                    module_name = module_name.replace(f"input_blocks_{i}_1", f"down_blocks_{block_id}_attentions_{layer_in_block_id}")
+                    module_name = module_name.replace(f"input_blocks_{i}_2", f"down_blocks_{block_id}_resnets_{layer_in_block_id}")
+                if "middle_block" in module_name:
+                    module_name = module_name.replace("middle_block_0", "mid_block_resnets_0")
+                    module_name = module_name.replace("middle_block_1", "mid_block_attentions_0")
+                    module_name = module_name.replace("middle_block_2", "mid_block_resnets_1")
+                if "output_blocks" in module_name:
+                    i = int(module_name.split("output_blocks_", 1)[1].split("_", 1)[0])
+                    block_id = i // (layers_per_block + 1)
+                    layer_in_block_id = i % (layers_per_block + 1)
+                    module_name = module_name.replace(f"output_blocks_{i}_0", f"up_blocks_{block_id}_resnets_{layer_in_block_id}")
+                    module_name = module_name.replace(f"output_blocks_{i}_1", f"up_blocks_{block_id}_attentions_{layer_in_block_id}")
+                    module_name = module_name.replace(f"output_blocks_{i}_2", f"up_blocks_{block_id}_resnets_{layer_in_block_id}")
+                
+                module_name = module_name.replace("in_layers_0", "norm1")
+                module_name = module_name.replace("in_layers_2", "conv1")
+
+                module_name = module_name.replace("out_layers_0", "norm2")
+                module_name = module_name.replace("out_layers_3", "conv2")
+
+                module_name = module_name.replace("emb_layers_1", "time_emb_proj")
+                module_name = module_name.replace("skip_connection", "conv_shortcut")
+
                 if module_name not in name_to_module:
                     print(f"no module found for LoRA weight: {key}")
                     continue

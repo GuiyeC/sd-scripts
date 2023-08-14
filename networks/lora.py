@@ -725,6 +725,8 @@ class LoRANetwork(torch.nn.Module):
     TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
     LORA_PREFIX_UNET = "lora_unet"
     LORA_PREFIX_TEXT_ENCODER = "lora_te"
+    LORA_PREFIX_TEXT_ENCODER_1 = "lora_te1"
+    LORA_PREFIX_TEXT_ENCODER_2 = "lora_te2"
 
     def __init__(
         self,
